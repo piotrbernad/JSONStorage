@@ -1,13 +1,10 @@
 //
 //  JSONStorage.swift
-//  zinnow
 //
 //  Created by Piotr Bernad on 04.04.2017.
-//  Copyright © 2017 Zumba Fitness, LLC. All rights reserved.
 //
 
 import Foundation
-import JSONCodable
 import RxSwift
 
 public enum JSONStorageType {
@@ -29,7 +26,7 @@ public enum JSONStorageError: Error {
     case couldNotCreateJSON
 }
 
-public class JSONStorage<T: JSONCodable> {
+public class JSONStorage<T: Codable> {
     
     private let document: String
     private let type: JSONStorageType
@@ -61,15 +58,12 @@ public class JSONStorage<T: JSONCodable> {
             
             DispatchQueue.global(qos: .background).async {
                 guard let storeUrl = self.storeUrl,
-                    let readData = try? Data(contentsOf: storeUrl),
-                    let json = try? JSONSerialization.jsonObject(with: readData, options: .allowFragments),
-                    let jsonArray = json as? [JSONObject]
-                    else {
-                        return
-                }
+                      let readData = try? Data(contentsOf: storeUrl) else { return }
+                
+                let coder = JSONDecoder()
                 
                 do {
-                    self.memoryCache = try [T].init(JSONArray: jsonArray)
+                    self.memoryCache = try coder.decode([T].self, from: readData)
                 } catch let error {
                     assertionFailure(error.localizedDescription + " - Serialization failure")
                     self.memoryCache = []
@@ -105,16 +99,10 @@ public class JSONStorage<T: JSONCodable> {
         }
         
         let readData = try Data(contentsOf: storeUrl)
-        let json = try JSONSerialization.jsonObject(with: readData, options: .allowFragments)
+    
+        let coder = JSONDecoder()
         
-        guard let jsonArray = json as? [JSONObject] else { return [] }
-        
-        do {
-            return try [T].init(JSONArray: jsonArray)
-        } catch let error {
-            assertionFailure(error.localizedDescription + " - Serialization failure")
-            return []
-        }
+        return try coder.decode([T].self, from: readData)
     }
     
     public func read() throws -> [T] {
@@ -143,24 +131,23 @@ public class JSONStorage<T: JSONCodable> {
     func writeToFile(_ itemsToWrite: [T]) {
         
         DispatchQueue.global(qos: .background).async {
-        
-            let jsonArray = itemsToWrite.map { $0.jsonRepresentation() }
             
-            guard let jsonData = jsonArray.data else {
-                assertionFailure("Could not store json")
-                return
-            }
-            
-            guard let storeUrl = self.storeUrl else {
-                assertionFailure("Could not store json")
-                return
-            }
+            let encoder = JSONEncoder()
             
             do {
-                try jsonData.write(to: storeUrl)
+                let data = try encoder.encode(itemsToWrite)
+                
+                guard let storeUrl = self.storeUrl else {
+                    assertionFailure("Could not store json")
+                    return
+                }
+                
+                try data.write(to: storeUrl)
+                
             } catch let error {
-                print( error)
+                assertionFailure("Write Error \(error)")
             }
+            
         }
     }
     
@@ -181,23 +168,16 @@ extension JSONStorage {
                 return Disposables.create { }
             }
             
-            guard let readData = try? Data(contentsOf: storeUrl),
-                let json = try? JSONSerialization.jsonObject(with: readData, options: .allowFragments) else {
+            guard let readData = try? Data(contentsOf: storeUrl) else {
                     observer.onNext([])
                     return Disposables.create { }
             }
             
-            guard let jsonArray = json as? [JSONObject] else {
-                observer.onNext([])
-                return Disposables.create { }
-            }
+            let coder = JSONDecoder()
             
-            do {
-                let array = try [T].init(JSONArray: jsonArray)
-                observer.onNext(array)
-            } catch let error {
-                assertionFailure(error.localizedDescription + " - Serialization failure")
-            }
+            let objects = try? coder.decode([T].self, from: readData)
+            
+            observer.onNext(objects ?? [])
             
             return Disposables.create {
                 
