@@ -162,15 +162,15 @@ extension JSONStorage {
         
         return Observable.create({ [weak self] (observer) -> Disposable in
             
-            guard let storeUrl = self.storeUrl else {
+            guard let storeUrl = self?.storeUrl else {
                 observer.onError(JSONStorageError.wrongDocumentPath)
-				return Disposables.create()
+                return Disposables.create()
             }
             
             guard let readData = try? Data(contentsOf: storeUrl) else {
                     observer.onNext([])
                     observer.onCompleted()
-            		return Disposables.create()
+                    return Disposables.create()
             }
             
             let coder = JSONDecoder()
@@ -179,8 +179,8 @@ extension JSONStorage {
             
             observer.onNext(objects ?? [])
             observer.onCompleted()
-            
-			return Disposables.create()
+
+            return Disposables.create()
         })
     }
 }
