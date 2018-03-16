@@ -2,7 +2,6 @@
 //  JSONStorage.swift
 //
 //  Created by Piotr Bernad on 04.04.2017.
-//
 
 import Foundation
 import RxSwift
