@@ -160,16 +160,17 @@ extension JSONStorage {
             return Observable.just(self.memoryCache)
         }
         
-        return Observable.create({ (observer) -> Disposable in
+        return Observable.create({ [weak self] (observer) -> Disposable in
             
             guard let storeUrl = self.storeUrl else {
                 observer.onError(JSONStorageError.wrongDocumentPath)
-                return Disposables.create { }
+				return Disposables.create()
             }
             
             guard let readData = try? Data(contentsOf: storeUrl) else {
                     observer.onNext([])
-                    return Disposables.create { }
+                    observer.onCompleted()
+            		return Disposables.create()
             }
             
             let coder = JSONDecoder()
@@ -177,10 +178,9 @@ extension JSONStorage {
             let objects = try? coder.decode([T].self, from: readData)
             
             observer.onNext(objects ?? [])
+            observer.onCompleted()
             
-            return Disposables.create {
-                
-            }
+			return Disposables.create()
         })
     }
 }
