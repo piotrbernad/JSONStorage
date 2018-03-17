@@ -30,7 +30,6 @@ public enum JSONStorageError: Error {
     case couldNotCreateJSON
 }
 
-
 public class JSONStorage<T: Codable> {
     
     private let document: String
@@ -108,10 +107,10 @@ public class JSONStorage<T: Codable> {
             return memoryCache
         }
         
-        return try fileRead()
+        return try readFromFile()
     }
     
-    private func fileRead() throws -> [T] {
+    private func readFromFile() throws -> [T] {
         guard let storeUrl = storeUrl else {
             throw JSONStorageError.wrongDocumentPath
         }
@@ -165,7 +164,6 @@ public class JSONStorage<T: Codable> {
             
         }
     }
-    
 }
 
 ///
