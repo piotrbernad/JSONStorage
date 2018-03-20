@@ -20,11 +20,6 @@ public enum JSONStorageType {
     }
 }
 
-public enum UseReadMemoryCache {
-    case no
-    case yes(saveDebounce: TimeInterval)
-}
-
 public enum JSONStorageError: Error {
     case wrongDocumentPath
     case couldNotCreateJSON
@@ -36,7 +31,9 @@ public class JSONStorage<T: Codable> {
     private let type: JSONStorageType
     fileprivate let readSubject = PublishSubject<[T]>()
     fileprivate let saveMemoryCacheToFile: PublishSubject<Bool> = PublishSubject()
-    fileprivate let useMemoryCache: UseReadMemoryCache
+    fileprivate let useReadMemoryCache: Bool
+    /// This property is used only if `useReadMemoryCache` set to true
+    fileprivate let saveDebounce: TimeInterval
     private let disposeBag = DisposeBag()
     
     var memoryCache: [T]
@@ -50,15 +47,16 @@ public class JSONStorage<T: Codable> {
         return dir.appendingPathComponent(self.document)
     }()
     
-    public init(type: JSONStorageType, document: String, useMemoryCache: UseReadMemoryCache = .no) {
+    public init(type: JSONStorageType, document: String, useReadMemoryCache: Bool = false, saveDebounce: TimeInterval = 0.0) {
         self.type = type
         self.document = document
         self.memoryCache = []
-        self.useMemoryCache = useMemoryCache
+        self.useReadMemoryCache = useReadMemoryCache
+        self.saveDebounce = saveDebounce
         super.init()
         
         // Using memory cache - load data in background and setup save debouncing
-        guard case .yes(let memoryCacheDebounce) = useMemoryCache else { return }
+        guard useReadMemoryCache else { return }
         
         DispatchQueue.global(qos: .background).async {
             guard let storeUrl = self.storeUrl,
@@ -78,7 +76,7 @@ public class JSONStorage<T: Codable> {
         
         saveMemoryCacheToFile
             .asObservable()
-            .debounce(memoryCacheDebounce, scheduler: scheduler)
+            .debounce(saveDebounce, scheduler: scheduler)
             .subscribe(onNext: { [weak self] _ in
                 guard let `self` = self else { return }
                 self.writeToFile(self.memoryCache)
@@ -94,7 +92,7 @@ public class JSONStorage<T: Codable> {
     @objc func receivedMemoryWarning(notification: NSNotification) {
         print("Memory warning, releasing memory cache")
         
-        guard case .yes = useMemoryCache else { return }
+        guard useReadMemoryCache else { return }
         writeToFile(memoryCache)
         memoryCache = []
     }
@@ -103,7 +101,7 @@ public class JSONStorage<T: Codable> {
     
     public func read() throws -> [T] {
         
-        if case .yes = useMemoryCache {
+        if useReadMemoryCache {
             return memoryCache
         }
         
@@ -126,7 +124,7 @@ public class JSONStorage<T: Codable> {
     
     public func write(_ itemsToWrite: [T]) throws {
         
-        if case .yes = useMemoryCache {
+        if useReadMemoryCache {
             memoryCache = itemsToWrite
             readSubject.onNext(itemsToWrite)
             saveMemoryCacheToFile.onNext(true)
@@ -152,7 +150,7 @@ public class JSONStorage<T: Codable> {
                 }
                 
                 try data.write(to: storeUrl)
-                if case .no = self.useMemoryCache {
+                if useReadMemoryCache == false {
                     // Generate new read event for storage that
                     // do not use read cache
                     self.readSubject.onNext(itemsToWrite)
@@ -195,7 +193,7 @@ extension JSONStorage {
     
     fileprivate func readOnce() -> Observable<[T]> {
         
-        if case .yes = useMemoryCache {
+        if useReadMemoryCache {
             return Observable.just(memoryCache)
         }
         
