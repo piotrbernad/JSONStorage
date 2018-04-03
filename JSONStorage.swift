@@ -59,7 +59,7 @@ public class JSONStorage<T: Codable> {
                 guard let storeUrl = self.storeUrl,
                       let readData = try? Data(contentsOf: storeUrl) else { return }
                 
-                let coder = JSONDecoder()
+                let coder = TahmeelJSONDecoder()
                 
                 do {
                     self.memoryCache = try coder.decode([T].self, from: readData)
@@ -99,7 +99,7 @@ public class JSONStorage<T: Codable> {
         
         let readData = try Data(contentsOf: storeUrl)
     
-        let coder = JSONDecoder()
+        let coder = TahmeelJSONDecoder()
         
         return try coder.decode([T].self, from: readData)
     }
@@ -131,7 +131,7 @@ public class JSONStorage<T: Codable> {
         
         DispatchQueue.global(qos: .background).async {
             
-            let encoder = JSONEncoder()
+            let encoder = TahmeelJSONEncoder()
             
             do {
                 let data = try encoder.encode(itemsToWrite)
@@ -172,7 +172,7 @@ extension JSONStorage {
                     return Disposables.create { }
             }
             
-            let coder = JSONDecoder()
+            let coder = TahmeelJSONDecoder()
             
             let objects = try? coder.decode([T].self, from: readData)
             
