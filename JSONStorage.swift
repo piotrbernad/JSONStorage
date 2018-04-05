@@ -45,11 +45,16 @@ public class JSONStorage<T: Codable> {
     
     public let saveMemoryCacheToFile: PublishSubject<Bool> = PublishSubject()
     
-    public init(type: JSONStorageType, document: String, useMemoryCache: Bool = false) {
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+    
+    public init(type: JSONStorageType, document: String, useMemoryCache: Bool = false, encoder: JSONEncoder, decoder: JSONDecoder) {
         self.type = type
         self.document = document
         self.memoryCache = []
         self.useMemoryCache = useMemoryCache
+        self.encoder = encoder
+        self.decoder = decoder
         
         if self.useMemoryCache {
             
@@ -59,7 +64,7 @@ public class JSONStorage<T: Codable> {
                 guard let storeUrl = self.storeUrl,
                       let readData = try? Data(contentsOf: storeUrl) else { return }
                 
-                let coder = TahmeelJSONDecoder()
+                let coder = self.decoder
                 
                 do {
                     self.memoryCache = try coder.decode([T].self, from: readData)
@@ -99,7 +104,7 @@ public class JSONStorage<T: Codable> {
         
         let readData = try Data(contentsOf: storeUrl)
     
-        let coder = TahmeelJSONDecoder()
+        let coder = self.decoder
         
         return try coder.decode([T].self, from: readData)
     }
@@ -131,7 +136,7 @@ public class JSONStorage<T: Codable> {
         
         DispatchQueue.global(qos: .background).async {
             
-            let encoder = TahmeelJSONEncoder()
+            let encoder = self.encoder
             
             do {
                 let data = try encoder.encode(itemsToWrite)
@@ -172,7 +177,7 @@ extension JSONStorage {
                     return Disposables.create { }
             }
             
-            let coder = TahmeelJSONDecoder()
+            let coder = self.decoder
             
             let objects = try? coder.decode([T].self, from: readData)
             
