@@ -36,6 +36,9 @@ public class JSONStorage<T: Codable> {
     fileprivate let saveDebounce: TimeInterval
     private let disposeBag = DisposeBag()
     
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+    
     var memoryCache: [T]
     
     fileprivate lazy var storeUrl: URL? = {
@@ -47,13 +50,14 @@ public class JSONStorage<T: Codable> {
         return dir.appendingPathComponent(self.document)
     }()
     
-    public init(type: JSONStorageType, document: String, useReadMemoryCache: Bool = false, saveDebounce: TimeInterval = 0.0) {
+    public init(type: JSONStorageType, document: String, encoder: JSONEncoder = JSONEncoder(), decoder: JSONDecoder = JSONDecoder(), useReadMemoryCache: Bool = false, saveDebounce: TimeInterval = 0.0) {
         self.type = type
         self.document = document
         self.memoryCache = []
         self.useReadMemoryCache = useReadMemoryCache
         self.saveDebounce = saveDebounce
-        super.init()
+        self.encoder = encoder
+        self.decoder = decoder
         
         // Using memory cache - load data in background and setup save debouncing
         guard useReadMemoryCache else { return }
@@ -62,7 +66,7 @@ public class JSONStorage<T: Codable> {
             guard let storeUrl = self.storeUrl,
                 let readData = try? Data(contentsOf: storeUrl) else { return }
             
-            let coder = JSONDecoder()
+            let coder = self.decoder
             
             do {
                 self.memoryCache = try coder.decode([T].self, from: readData)
@@ -114,8 +118,8 @@ public class JSONStorage<T: Codable> {
         }
         
         let readData = try Data(contentsOf: storeUrl)
-        
-        let coder = JSONDecoder()
+
+        let coder = self.decoder
         
         return try coder.decode([T].self, from: readData)
     }
@@ -139,7 +143,7 @@ public class JSONStorage<T: Codable> {
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let `self` = self else { return }
             
-            let encoder = JSONEncoder()
+            let encoder = self.encoder
             
             do {
                 let data = try encoder.encode(itemsToWrite)
@@ -210,7 +214,7 @@ extension JSONStorage {
                 return Disposables.create()
             }
             
-            let coder = JSONDecoder()
+            let coder = self.decoder
             
             let objects = try? coder.decode([T].self, from: readData)
             
