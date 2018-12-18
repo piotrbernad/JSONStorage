@@ -32,7 +32,7 @@ public class JSONStorage<T: Codable> {
     fileprivate let useMemoryCache: Bool
     private let disposeBag = DisposeBag()
     
-    var memoryCache: [T]
+    var memoryCache: Variable<[T]>
     
     fileprivate lazy var storeUrl: URL? = {
         guard let dir = FileManager.default.urls(for: self.type.searchPathDirectory, in: .userDomainMask).first else {
@@ -51,14 +51,14 @@ public class JSONStorage<T: Codable> {
     public init(type: JSONStorageType, document: String, useMemoryCache: Bool = false, encoder: JSONEncoder, decoder: JSONDecoder) {
         self.type = type
         self.document = document
-        self.memoryCache = []
+        self.memoryCache = Variable([])
         self.useMemoryCache = useMemoryCache
         self.encoder = encoder
         self.decoder = decoder
         
         if self.useMemoryCache {
             
-            self.memoryCache = []
+            self.memoryCache = Variable([])
             
             DispatchQueue.global(qos: .background).async {
                 guard let storeUrl = self.storeUrl,
@@ -67,10 +67,10 @@ public class JSONStorage<T: Codable> {
                 let coder = self.decoder
                 
                 do {
-                    self.memoryCache = try coder.decode([T].self, from: readData)
+                    self.memoryCache.value = try coder.decode([T].self, from: readData)
                 } catch let error {
                     assertionFailure(error.localizedDescription + " - Serialization failure")
-                    self.memoryCache = []
+                    self.memoryCache.value = []
                 }
             }
         }
@@ -79,7 +79,7 @@ public class JSONStorage<T: Codable> {
             .asObservable()
             .subscribe(onNext: { [weak self] _ in
                 guard let `self` = self else { return }
-                self.writeToFile(self.memoryCache)
+                self.writeToFile(self.memoryCache.value)
         }).disposed(by: self.disposeBag)
         
         NotificationCenter.default.addObserver(self, selector: #selector(receivedMemoryWarning(notification:)), name: NSNotification.Name.UIApplicationDidReceiveMemoryWarning, object: nil)
@@ -92,9 +92,9 @@ public class JSONStorage<T: Codable> {
     @objc func receivedMemoryWarning(notification: NSNotification) {
         print("memory warning, releasing memory cache")
         
-        self.writeToFile(self.memoryCache)
+        self.writeToFile(self.memoryCache.value)
         
-        self.memoryCache = []
+        self.memoryCache.value = []
     }
     
     private func fileRead() throws -> [T] {
@@ -112,7 +112,7 @@ public class JSONStorage<T: Codable> {
     public func read() throws -> [T] {
         
         if self.useMemoryCache {
-            return self.memoryCache
+            return self.memoryCache.value
         }
         
         return try fileRead()
@@ -121,7 +121,7 @@ public class JSONStorage<T: Codable> {
     public func write(_ itemsToWrite: [T]) throws {
         
         if self.useMemoryCache {
-            self.memoryCache = itemsToWrite
+            self.memoryCache.value = itemsToWrite
             
             self.saveMemoryCacheToFile.onNext(true)
             
@@ -162,7 +162,7 @@ extension JSONStorage {
     public func rx_read() -> Observable<[T]> {
         
         if self.useMemoryCache {
-            return Observable.just(self.memoryCache)
+            return self.memoryCache.asDriver().asObservable()
         }
         
         return Observable.create({ (observer) -> Disposable in
