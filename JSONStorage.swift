@@ -36,6 +36,8 @@ public class JSONStorage<T: Codable> {
     fileprivate let saveDebounce: TimeInterval
     private let disposeBag = DisposeBag()
     
+    public typealias ItemType = T
+    
     var memoryCache: Variable<[T]>
 
     private let encoder: JSONEncoder
@@ -173,32 +175,13 @@ public class JSONStorage<T: Codable> {
     }
 }
 
-///
-/// JSONStorage + RxSwift
-///
-
-// It's just name wrapping protocol for JSONStorage to support Reactive extensions
-
-public protocol JSONStorageProtocol {
-    associatedtype ItemType: Codable
-}
-
-extension JSONStorage: JSONStorageProtocol {
-    public typealias ItemType = T
-}
-
-extension Reactive where Base : JSONStorageProtocol {
-    /// Continuous read events signal
-    public var read: Observable<[Base.ItemType]> {
-        guard let jsonStorage = base as? JSONStorage<Base.ItemType> else {
-            return Observable.empty()
+extension JSONStorage {
+    public var rx_read: Observable<[T]> {
+        if useReadMemoryCache == true {
+            return memoryCache.asDriver().asObservable()
         }
         
-        if jsonStorage.useReadMemoryCache == true {
-            return jsonStorage.memoryCache.asDriver().asObservable()
-        }
-        
-        return jsonStorage.readOnce().concat(jsonStorage.readSubject.asObservable())
+        return readOnce().concat(readSubject.asObservable())
     }
 }
 
