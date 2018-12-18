@@ -29,10 +29,17 @@ public class JSONStorage<T: Codable> {
     
     private let document: String
     private let type: JSONStorageType
-    fileprivate let useMemoryCache: Bool
+    fileprivate let readSubject = PublishSubject<[T]>()
+    fileprivate let saveMemoryCacheToFile: PublishSubject<Bool> = PublishSubject()
+    fileprivate let useReadMemoryCache: Bool
+    /// This property is used only if `useReadMemoryCache` set to true
+    fileprivate let saveDebounce: TimeInterval
     private let disposeBag = DisposeBag()
     
     var memoryCache: Variable<[T]>
+
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
     
     fileprivate lazy var storeUrl: URL? = {
         guard let dir = FileManager.default.urls(for: self.type.searchPathDirectory, in: .userDomainMask).first else {
@@ -43,98 +50,102 @@ public class JSONStorage<T: Codable> {
         return dir.appendingPathComponent(self.document)
     }()
     
-    public let saveMemoryCacheToFile: PublishSubject<Bool> = PublishSubject()
-    
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
-    
-    public init(type: JSONStorageType, document: String, useMemoryCache: Bool = false, encoder: JSONEncoder, decoder: JSONDecoder) {
+    public init(type: JSONStorageType, document: String, encoder: JSONEncoder = JSONEncoder(), decoder: JSONDecoder = JSONDecoder(), useReadMemoryCache: Bool = false, saveDebounce: TimeInterval = 0.0) {
         self.type = type
         self.document = document
         self.memoryCache = Variable([])
-        self.useMemoryCache = useMemoryCache
+        self.useReadMemoryCache = useReadMemoryCache
+        self.saveDebounce = saveDebounce
         self.encoder = encoder
         self.decoder = decoder
         
-        if self.useMemoryCache {
+        // Using memory cache - load data in background and setup save debouncing
+        guard useReadMemoryCache else { return }
+        
+        self.memoryCache = Variable([])
             
-            self.memoryCache = Variable([])
-            
-            DispatchQueue.global(qos: .background).async {
-                guard let storeUrl = self.storeUrl,
-                      let readData = try? Data(contentsOf: storeUrl) else { return }
+        DispatchQueue.global(qos: .background).async {
+            guard let storeUrl = self.storeUrl,
+                    let readData = try? Data(contentsOf: storeUrl) else { return }
                 
-                let coder = self.decoder
+            let coder = self.decoder
                 
-                do {
-                    self.memoryCache.value = try coder.decode([T].self, from: readData)
-                } catch let error {
-                    assertionFailure(error.localizedDescription + " - Serialization failure")
-                    self.memoryCache.value = []
-                }
+            do {
+                self.memoryCache.value = try coder.decode([T].self, from: readData)
+            } catch let error {
+                assertionFailure(error.localizedDescription + " - Serialization failure")
+                self.memoryCache.value = []
             }
         }
         
-        self.saveMemoryCacheToFile
+        
+        let scheduler = ConcurrentDispatchQueueScheduler(qos: .background)
+        
+        saveMemoryCacheToFile
             .asObservable()
+            .debounce(saveDebounce, scheduler: scheduler)
             .subscribe(onNext: { [weak self] _ in
                 guard let `self` = self else { return }
+
                 self.writeToFile(self.memoryCache.value)
-        }).disposed(by: self.disposeBag)
+            }).disposed(by: self.disposeBag)
+
+
         
-        NotificationCenter.default.addObserver(self, selector: #selector(receivedMemoryWarning(notification:)), name: NSNotification.Name.UIApplicationDidReceiveMemoryWarning, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(receivedMemoryWarning(notification:)), name: .UIApplicationDidReceiveMemoryWarning, object: nil)
     }
     
     deinit {
-        NotificationCenter.default.removeObserver(self, name: NSNotification.Name.UIApplicationDidReceiveMemoryWarning, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .UIApplicationDidReceiveMemoryWarning, object: nil)
     }
     
     @objc func receivedMemoryWarning(notification: NSNotification) {
-        print("memory warning, releasing memory cache")
+        print("Memory warning, releasing memory cache")
         
-        self.writeToFile(self.memoryCache.value)
-        
-        self.memoryCache.value = []
+        guard useReadMemoryCache else { return }
+        writeToFile(memoryCache.value)
+        memoryCache.value = []
     }
     
-    private func fileRead() throws -> [T] {
+    // MARK: - Read
+    
+    public func read() throws -> [T] {
+        
+        if useReadMemoryCache {
+            return memoryCache.value
+        }
+        
+        return try readFromFile()
+    }
+    
+    private func readFromFile() throws -> [T] {
         guard let storeUrl = storeUrl else {
             throw JSONStorageError.wrongDocumentPath
         }
         
         let readData = try Data(contentsOf: storeUrl)
-    
+
         let coder = self.decoder
         
         return try coder.decode([T].self, from: readData)
     }
     
-    public func read() throws -> [T] {
-        
-        if self.useMemoryCache {
-            return self.memoryCache.value
-        }
-        
-        return try fileRead()
-    }
-    
     public func write(_ itemsToWrite: [T]) throws {
         
-        if self.useMemoryCache {
-            self.memoryCache.value = itemsToWrite
-            
-            self.saveMemoryCacheToFile.onNext(true)
-            
+        if useReadMemoryCache {
+            memoryCache.value = itemsToWrite
+            readSubject.onNext(itemsToWrite)
+            saveMemoryCacheToFile.onNext(true)
             return
         }
         
         writeToFile(itemsToWrite)
-
     }
     
-    func writeToFile(_ itemsToWrite: [T]) {
+    fileprivate func writeToFile(_ itemsToWrite: [T]) {
         
-        DispatchQueue.global(qos: .background).async {
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let `self` = self else { return }
             
             let encoder = self.encoder
             
@@ -148,33 +159,69 @@ public class JSONStorage<T: Codable> {
                 
                 try data.write(to: storeUrl)
                 
+                if self.useReadMemoryCache == false {
+                    // Generate new read event for storage that
+                    // do not use read cache
+                    self.readSubject.onNext(itemsToWrite)
+                }
+                
             } catch let error {
                 assertionFailure("Write Error \(error)")
             }
             
         }
     }
-    
+}
+
+///
+/// JSONStorage + RxSwift
+///
+
+// It's just name wrapping protocol for JSONStorage to support Reactive extensions
+
+public protocol JSONStorageProtocol {
+    associatedtype ItemType: Codable
+}
+
+extension JSONStorage: JSONStorageProtocol {
+    public typealias ItemType = T
+}
+
+extension Reactive where Base : JSONStorageProtocol {
+    /// Continuous read events signal
+    public var read: Observable<[Base.ItemType]> {
+        guard let jsonStorage = base as? JSONStorage<Base.ItemType> else {
+            return Observable.empty()
+        }
+        
+        if jsonStorage.useReadMemoryCache == true {
+            return jsonStorage.memoryCache.asDriver().asObservable()
+        }
+        
+        return jsonStorage.readOnce().concat(jsonStorage.readSubject.asObservable())
+    }
 }
 
 extension JSONStorage {
     
-    public func rx_read() -> Observable<[T]> {
+    fileprivate func readOnce() -> Observable<[T]> {
         
-        if self.useMemoryCache {
-            return self.memoryCache.asDriver().asObservable()
+
+        if useReadMemoryCache {
+            return Observable.just(memoryCache.value)
         }
         
-        return Observable.create({ (observer) -> Disposable in
+        return Observable.create({ [weak self] (observer) -> Disposable in
             
-            guard let storeUrl = self.storeUrl else {
+            guard let `self` = self, let storeUrl = self.storeUrl else {
                 observer.onError(JSONStorageError.wrongDocumentPath)
-                return Disposables.create { }
+                return Disposables.create()
             }
             
             guard let readData = try? Data(contentsOf: storeUrl) else {
-                    observer.onNext([])
-                    return Disposables.create { }
+                observer.onNext([])
+                observer.onCompleted()
+                return Disposables.create()
             }
             
             let coder = self.decoder
@@ -182,10 +229,9 @@ extension JSONStorage {
             let objects = try? coder.decode([T].self, from: readData)
             
             observer.onNext(objects ?? [])
+            observer.onCompleted()
             
-            return Disposables.create {
-                
-            }
+            return Disposables.create()
         })
     }
 }
